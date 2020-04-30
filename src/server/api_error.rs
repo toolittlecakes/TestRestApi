@@ -16,8 +16,8 @@ pub enum ApiError {
     Base64Decoding,
     #[fail(display = "Preview generation failed")]
     PreviewGeneration,
-    #[fail(display = "Unknown image format")]
-    UnknownImageFormat,
+    #[fail(display = "Unsupported image format")]
+    UnsupportedImageFormat,
     #[fail(display = "Invalid url. Cannot be localhost")]
     LocalhostUrl,
     #[fail(display = "File system error: {}", _0)]
@@ -44,7 +44,7 @@ impl ResponseError for ApiError {
             PreviewGeneration | FileSystemError(_)
             => StatusCode::INTERNAL_SERVER_ERROR,
 
-            Base64Decoding | NameExists | UnknownImageFormat | LocalhostUrl => StatusCode::BAD_REQUEST,
+            Base64Decoding | NameExists | UnsupportedImageFormat | LocalhostUrl => StatusCode::BAD_REQUEST,
         }
     }
 

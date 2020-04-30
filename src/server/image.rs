@@ -21,8 +21,10 @@ impl Image {
     /// # Errors
     /// If image's format is unknown
     ///
-    pub fn new(name: String, binary_data: Vec<u8>) -> Result<Self, ApiError> {
-        immeta::load_from_buf(&binary_data).map_err(|_|ApiError::UnknownImageFormat)?;
+    pub fn create(name: String, binary_data: Vec<u8>) -> Result<Self, ApiError> {
+        if !Self::is_supported_type(&binary_data) {
+            return Err(ApiError::UnsupportedImageFormat)
+        }
         Ok(Image {
             name,
             binary_data,
@@ -38,7 +40,16 @@ impl Image {
             std::fs::create_dir(dir)?;
         }
 
-        let file_path = dir.join(&self.name);
+        let mut file_path = dir.join(&self.name);
+
+        if let None = file_path.extension() {
+            file_path.set_extension(
+                immeta::load_from_buf(&self.binary_data).unwrap()
+                    .mime_type()
+                    .split('/')
+                    .collect::<Vec<_>>()[1]
+            );
+        }
 
         if file_path.exists() {
             return Err(ApiError::NameExists);
@@ -57,12 +68,20 @@ impl Image {
     pub fn generate_preview(&self) -> Result<Image, ApiError> {
         let preview_data = transformation::resize_image(&self.binary_data, 100, 100)
             .ok_or(ApiError::PreviewGeneration)?;
-        Ok(Image::new("preview_".to_string() + &self.name, preview_data)?)
+        Ok(Image::create("preview_".to_string() + &self.name, preview_data)?)
     }
 
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn is_supported_type(data: &[u8]) -> bool {
+        match immeta::load_from_buf(data) {
+            Ok(immeta::GenericMetadata::Jpeg(_)) |
+            Ok(immeta::GenericMetadata::Png(_)) => true,
+            _ => false,
+        }
     }
 }
 
