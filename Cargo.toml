@@ -28,5 +28,7 @@ ctrlc = {version = "3.1", features = ["termination"] }
 
 immeta = "0.4"
 
+async-trait ="0.1.30"
+
 [profile.release]
 panic = 'abort'

@@ -40,16 +40,14 @@ impl Image {
             std::fs::create_dir(dir)?;
         }
 
-        let mut file_path = dir.join(&self.name);
-
-        if let None = file_path.extension() {
-            file_path.set_extension(
+        let file_path = dir.join(&self.name)
+            .with_extension(
                 immeta::load_from_buf(&self.binary_data).unwrap()
                     .mime_type()
                     .split('/')
                     .collect::<Vec<_>>()[1]
             );
-        }
+
 
         if file_path.exists() {
             return Err(ApiError::NameExists);

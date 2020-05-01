@@ -1,11 +1,24 @@
 //! Server configuration
 //! Supported routes and preferences
-use crate::server::{SupportedRequest};
-use crate::server::extractor::{ApiJsonRequest, ApiUrlRequest};
+use crate::server::{ApiJsonRequest, ApiUrlRequest, SupportedRequest, Image};
 
 use actix_web::{web, guard, HttpResponse, Result};
 
 use actix_multipart::Multipart;
+use actix_web::http::StatusCode;
+
+use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize)]
+struct ResponseMessage {
+    code: u16,
+    message: String,
+}
+
+impl ResponseMessage {
+    fn new(code: u16, message: String) -> ResponseMessage {
+        ResponseMessage { code, message }
+    }
+}
 
 /// Post request method for [`SupportedRequest`] types
 /// Creates ['Image'] from path(as a name) and extracted data from request,
@@ -15,19 +28,39 @@ use actix_multipart::Multipart;
 /// If extraction filed
 /// If database storing failed
 ///
-async fn create<T: Into<SupportedRequest>>(request: T) -> Result<HttpResponse> {
-    let images = request.into().try_extract().await?;
-
+async fn create<T: SupportedRequest>(request: T) -> Result<HttpResponse> {
+    let images = request.extract().await;
+    let mut response = vec![];
     for image in images {
-        let preview = image.generate_preview()?;
-        image.store(std::path::Path::new("./images"))?;
-        preview.store(std::path::Path::new("./images"))?;
+        match image_process(image) {
+            Ok(response_message) => response.push(response_message),
+            Err(e) => response.push(
+                ResponseMessage::new(
+                    e.as_response_error().status_code().as_u16(),
+                    format!("Error: {}", e.to_string()))
+            )
+        }
     }
     Ok(HttpResponse::Ok()
-        .body(format!("Images uploaded")))
+        .json(response))
 }
 
 
+fn image_process(image: Result<Image>) -> Result<ResponseMessage> {
+    let image = image?;
+    let path = std::path::Path::new("./images");
+    image.store(path)?;
+
+    let preview = image.generate_preview()?;
+    let path_preview = path.join(std::path::Path::new("preview")).as_path();
+    preview.store(path_preview)?;
+    Ok(
+        ResponseMessage::new(
+            StatusCode::OK.as_u16(),
+            format!("Image {} successfully uploaded", image.name()),
+        )
+    )
+}
 
 
 /// Configure routes
@@ -46,7 +79,8 @@ pub fn init_routes(cfg: &mut web::ServiceConfig) {
                 .route(
                     web::post()
                         .guard(guard::Header("content-type", "application/json"))
-                        .to(create::<ApiJsonRequest>)))
+                        .to(create::<ApiJsonRequest>))
+            )
             .service(web::resource("from_multipart")
                 .route(
                     web::post()
