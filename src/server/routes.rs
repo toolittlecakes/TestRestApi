@@ -1,13 +1,17 @@
 //! Server configuration
 //! Supported routes and preferences
-use crate::server::{ApiJsonRequest, ApiUrlRequest, SupportedRequest, Image};
+use crate::server::{ApiJsonRequest, ApiUrlRequest, SupportedRequest, ApiError};
+use crate::image::Image;
 
-use actix_web::{web, guard, HttpResponse, Result};
+use actix_web::{web, guard, HttpResponse, Result, ResponseError};
 
 use actix_multipart::Multipart;
 use actix_web::http::StatusCode;
 
 use serde::{Deserialize, Serialize};
+
+use crate::server::store::store;
+
 #[derive(Serialize, Deserialize)]
 struct ResponseMessage {
     code: u16,
@@ -17,6 +21,25 @@ struct ResponseMessage {
 impl ResponseMessage {
     fn new(code: u16, message: String) -> ResponseMessage {
         ResponseMessage { code, message }
+    }
+}
+
+impl From<ApiError> for ResponseMessage {
+    fn from(e: ApiError) -> Self {
+        use ApiError::*;
+        let code = match &e {
+            Base64Decoding | LocalhostUrl => 400,
+            _ => 500,
+        };
+        let message = match code {
+            500 => "Internal server error".to_string(),
+            _ => format!("{}", e).to_string()
+        };
+
+        ResponseMessage::new(
+            code,
+            message,
+        )
     }
 }
 
@@ -32,28 +55,26 @@ async fn create<T: SupportedRequest>(request: T) -> Result<HttpResponse> {
     let images = request.extract().await;
     let mut response = vec![];
     for image in images {
-        match image_process(image) {
-            Ok(response_message) => response.push(response_message),
-            Err(e) => response.push(
-                ResponseMessage::new(
-                    e.as_response_error().status_code().as_u16(),
-                    format!("Error: {}", e.to_string()))
-            )
-        }
+        response.push(
+            match image_process(image) {
+                Ok(response_message) => response_message,
+                Err(e) => ResponseMessage::from(e)
+            }
+        );
     }
     Ok(HttpResponse::Ok()
         .json(response))
 }
 
 
-fn image_process(image: Result<Image>) -> Result<ResponseMessage> {
+fn image_process(image: Result<Image, ApiError>) -> Result<ResponseMessage, ApiError> {
     let image = image?;
     let path = std::path::Path::new("./images");
-    image.store(path)?;
+    store(&image, path)?;
 
     let preview = image.generate_preview()?;
-    let path_preview = path.join(std::path::Path::new("preview")).as_path();
-    preview.store(path_preview)?;
+    let path_preview = &path.join(std::path::Path::new("preview"));
+    store(&preview, path_preview)?;
     Ok(
         ResponseMessage::new(
             StatusCode::OK.as_u16(),

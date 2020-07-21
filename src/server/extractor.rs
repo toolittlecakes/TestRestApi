@@ -1,12 +1,12 @@
 use futures::{StreamExt, TryStreamExt};
 
 use actix_multipart::{Multipart, Field};
-use actix_web::{web, client, Result};
+use actix_web::{web, client};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 
-use crate::server::{ApiError, Image};
-
+use crate::server::{ApiError};
+use crate::image::Image;
 pub type ApiJsonRequest = web::Json<Vec<JsonMessage>>;
 
 pub type ApiUrlRequest = web::Json<Vec<UrlMessage>>;
@@ -32,15 +32,15 @@ pub struct MultipartField {
 #[async_trait(? Send)]
 pub trait TryIntoImage: Sized {
     /// Performs the conversion.
-    async fn try_into_image(self) -> Result<Image>;
+    async fn try_into_image(self) -> Result<Image, ApiError>;
 }
 
 #[async_trait(? Send)]
 impl TryIntoImage for JsonMessage {
-    async fn try_into_image(self) -> Result<Image> {
+    async fn try_into_image(self) -> Result<Image, ApiError> {
         let JsonMessage { name, data } = self;
         let encoded: String = data.chars().filter(|ch| !ch.is_whitespace()).collect();
-        let decoded = base64::decode(encoded.as_bytes()).map_err(|_| ApiError::Base64Decoding)?;
+        let decoded = base64::decode(encoded.as_bytes())?;
         let image = Image::create(name, decoded)?;
         Ok(image)
     }
@@ -48,10 +48,10 @@ impl TryIntoImage for JsonMessage {
 
 #[async_trait(? Send)]
 impl TryIntoImage for UrlMessage {
-    async fn try_into_image(self) -> Result<Image> {
+    async fn try_into_image(self) -> Result<Image, ApiError> {
         let UrlMessage { name, url } = self;
         if url.contains("localhost") || url.contains("127.0.0.1") {
-            return Err(ApiError::LocalhostUrl.into());
+            return Err(ApiError::LocalhostUrl);
         }
         let client = client::Client::default();
 
@@ -62,14 +62,15 @@ impl TryIntoImage for UrlMessage {
             .await?;
 
         let data = response.body().await?.to_vec();
-        let image = Image::create(name, data)?;
+        let image = Image::create(name, data)
+            .map_err(|e| ApiError::from(e))?;
         Ok(image)
     }
 }
 
 #[async_trait(? Send)]
 impl TryIntoImage for MultipartField {
-    async fn try_into_image(self) -> Result<Image> {
+    async fn try_into_image(self) -> Result<Image,ApiError> {
         let mut field = self.field;
         let content_type = field.content_disposition().unwrap();
         let name = content_type.get_filename().unwrap().to_string();
@@ -80,7 +81,8 @@ impl TryIntoImage for MultipartField {
             let data = chunk.unwrap();
             buff.extend_from_slice(&data);
         }
-        let image = Image::create(name, buff)?;
+        let image = Image::create(name, buff)
+            .map_err(|e|ApiError::from(e))?;
         Ok(image)
     }
 }
@@ -93,14 +95,14 @@ impl TryIntoImage for MultipartField {
 
 #[async_trait(? Send)]
 pub trait SupportedRequest {
-    async fn extract(self) -> Vec<Result<Image>>;
+    async fn extract(self) -> Vec<Result<Image, ApiError>>;
 }
 
 #[async_trait(? Send)]
 impl<T> SupportedRequest for web::Json<Vec<T>>
     where T: TryIntoImage
 {
-    async fn extract(self) -> Vec<Result<Image>> {
+    async fn extract(self) -> Vec<Result<Image, ApiError>> {
         let messages = self.into_inner();
         let mut images = vec![];
         for message in messages {
@@ -112,7 +114,7 @@ impl<T> SupportedRequest for web::Json<Vec<T>>
 
 #[async_trait(? Send)]
 impl SupportedRequest for Multipart {
-    async fn extract(mut self) -> Vec<Result<Image>> {
+    async fn extract(mut self) -> Vec<Result<Image,ApiError>> {
         let mut images = vec![];
         while let Ok(Some(field)) = self.try_next().await {
             let field = MultipartField { field };

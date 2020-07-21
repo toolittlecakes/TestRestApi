@@ -1,14 +1,22 @@
-use crate::server::ApiError;
-use crate::transformation;
+use crate::image::transformation;
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+use failure::Fail;
 
 /// The type of data that the server collects.
 /// # Fields
 /// name is parsed from request's URL
 /// binary_data is a interior form of image. Extracted from request
 ///
+#[derive(Fail, Debug, PartialEq)]
+pub enum ImageError {
+    #[fail(display = "Preview generation failed")]
+    PreviewGeneration,
+    #[fail(display = "Unsupported image format")]
+    UnsupportedImageFormat,
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct Image {
     name: String,
@@ -21,41 +29,14 @@ impl Image {
     /// # Errors
     /// If image's format is unknown
     ///
-    pub fn create(name: String, binary_data: Vec<u8>) -> Result<Self, ApiError> {
+    pub fn create(name: String, binary_data: Vec<u8>) -> Result<Self, ImageError> {
         if !Self::is_supported_type(&binary_data) {
-            return Err(ApiError::UnsupportedImageFormat)
+            return Err(ImageError::UnsupportedImageFormat);
         }
         Ok(Image {
             name,
             binary_data,
         })
-    }
-    /// Store existing Image to database.
-    ///
-    /// # Errors
-    /// If Image with same name is already stored in database
-    ///
-    pub fn store(&self, dir: &std::path::Path) -> Result<(), ApiError> {
-        if !dir.exists() {
-            std::fs::create_dir(dir)?;
-        }
-
-        let file_path = dir.join(&self.name)
-            .with_extension(
-                immeta::load_from_buf(&self.binary_data).unwrap()
-                    .mime_type()
-                    .split('/')
-                    .collect::<Vec<_>>()[1]
-            );
-
-
-        if file_path.exists() {
-            return Err(ApiError::NameExists);
-        } else {
-            std::fs::File::create(&file_path)?
-                .write(&self.binary_data)?;
-        }
-        Ok(())
     }
 
     /// Creates 100x100 jpg preview of Image
@@ -63,9 +44,9 @@ impl Image {
     /// # Errors
     /// If binary_data field cannot be red as image by opencv
     ///
-    pub fn generate_preview(&self) -> Result<Image, ApiError> {
+    pub fn generate_preview(&self) -> Result<Self, ImageError> {
         let preview_data = transformation::resize_image(&self.binary_data, 100, 100)
-            .ok_or(ApiError::PreviewGeneration)?;
+            .ok_or(ImageError::PreviewGeneration)?;
         Ok(Image::create("preview_".to_string() + &self.name, preview_data)?)
     }
 
@@ -73,16 +54,24 @@ impl Image {
     pub fn name(&self) -> &str {
         &self.name
     }
+    pub fn data(&self) -> &Vec<u8> {
+        &self.binary_data
+    }
 
-    pub fn is_supported_type(data: &[u8]) -> bool {
+    fn is_supported_type(data: &[u8]) -> bool {
         match immeta::load_from_buf(data) {
             Ok(immeta::GenericMetadata::Jpeg(_)) |
             Ok(immeta::GenericMetadata::Png(_)) => true,
             _ => false,
         }
     }
+    pub fn extension(&self) -> &str {
+        immeta::load_from_buf(self.data()).unwrap()
+            .mime_type()
+            .split('/')
+            .collect::<Vec<_>>()[1]
+    }
 }
-
 
 // #[cfg(test)]
 // mod tests {

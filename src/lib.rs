@@ -3,7 +3,7 @@ extern crate log;
 
 use futures::executor::block_on;
 
-pub mod transformation;
+pub mod image;
 pub mod server;
 
 /// Run Rest-API.
